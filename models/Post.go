@@ -1,11 +1,14 @@
 package models
 
+//Post struct for blog post
 type Post struct {
-	Id      string
-	Title   string
-	Content string
+	ID              string
+	Title           string
+	ContentHTML     string
+	ContentMarkdown string
 }
 
-func NewPost(id, title, content string) *Post {
-	return &Post{id, title, content}
+//NewPost creates new blog post
+func NewPost(id, title, contentHTML, contentMarkdown string) *Post {
+	return &Post{id, title, contentHTML, contentMarkdown}
 }

@@ -5,86 +5,110 @@ import (
 	"html/template"
 	"net/http"
 
+	"github.com/go-martini/martini"
+	"github.com/martini-contrib/render"
 	"github.com/robotxet/webapp/models"
+	"github.com/russross/blackfriday"
 )
 
 var posts map[string]*models.Post
+var counter int
 
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	t, err := template.ParseFiles("templates/index.html", "templates/header.html", "templates/footer.html")
-	if err != nil {
-		fmt.Fprintf(w, err.Error())
-	}
+func indexHandler(rnd render.Render) {
+	fmt.Println(counter)
 
-	fmt.Println(posts)
-
-	t.ExecuteTemplate(w, "index", posts)
+	rnd.HTML(200, "index", posts)
 }
 
-func writeHandler(w http.ResponseWriter, r *http.Request) {
-	t, err := template.ParseFiles("templates/write.html", "templates/header.html", "templates/footer.html")
-	if err != nil {
-		fmt.Fprintf(w, err.Error())
-	}
-
-	t.ExecuteTemplate(w, "write", nil)
+func writeHandler(rnd render.Render) {
+	rnd.HTML(200, "write", nil)
 }
 
-func editHandler(w http.ResponseWriter, r *http.Request) {
-	t, err := template.ParseFiles("templates/write.html", "templates/header.html", "templates/footer.html")
-	if err != nil {
-		fmt.Fprintf(w, err.Error())
-	}
-
-	id := r.FormValue("id")
+func editHandler(rnd render.Render, r *http.Request, params martini.Params) {
+	id := params["id"]
 	post, found := posts[id]
 	if !found {
-		http.NotFound(w, r)
+		rnd.Redirect("/")
+		return
 	}
 
-	t.ExecuteTemplate(w, "write", post)
+	rnd.HTML(200, "write", post)
 }
 
-func deleteHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("id")
+func deleteHandler(rnd render.Render, r *http.Request, params martini.Params) {
+	id := params["id"]
 	if id == "" {
-		http.NotFound(w, r)
+		rnd.Redirect("/")
 	}
 
 	delete(posts, id)
 
-	http.Redirect(w, r, "/", 302)
+	rnd.Redirect("/")
 }
 
-func savePostHandler(w http.ResponseWriter, r *http.Request) {
+func getHTMLHanlder(rnd render.Render, r *http.Request) {
+	md := r.FormValue("md")
+	htmlBytes := blackfriday.MarkdownBasic([]byte(md))
+	rnd.JSON(200, map[string]interface{}{"html": string(htmlBytes)})
+}
+
+func savePostHandler(rnd render.Render, r *http.Request) {
 	id := r.FormValue("id")
 	title := r.FormValue("title")
-	content := r.FormValue("content")
+	contentMarkdown := r.FormValue("content")
+	contentHTML := string(blackfriday.MarkdownBasic([]byte(contentMarkdown)))
 
 	var post *models.Post
 	if id != "" {
 		post = posts[id]
 		post.Title = title
-		post.Content = content
+		post.ContentHTML = contentHTML
+		post.ContentMarkdown = contentMarkdown
 	} else {
 		id = GenerateId()
-		post := models.NewPost(id, title, content)
-		posts[post.Id] = post
+		post := models.NewPost(id, title, contentHTML, contentMarkdown)
+		posts[post.ID] = post
 	}
 
-	http.Redirect(w, r, "/", 302)
+	rnd.Redirect("/")
+}
+
+func unescape(x string) interface{} {
+	return template.HTML(x)
 }
 
 func main() {
 	fmt.Println("Listening on port 3000")
 
 	posts = make(map[string]*models.Post, 0)
+	counter = 0
 
-	http.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("./assets/"))))
-	http.HandleFunc("/", indexHandler)
-	http.HandleFunc("/write", writeHandler)
-	http.HandleFunc("/edit", editHandler)
-	http.HandleFunc("/delete", deleteHandler)
-	http.HandleFunc("/SavePost", savePostHandler)
-	http.ListenAndServe(":3000", nil)
+	m := martini.Classic()
+
+	unescapeFuncMap := template.FuncMap{"unescape": unescape}
+
+	m.Use(render.Renderer(render.Options{
+		Directory:  "templates",                         // Specify what path to load the templates from.
+		Layout:     "layout",                            // Specify a layout template. Layouts can call {{ yield }} to render the current template.
+		Extensions: []string{".tmpl", ".html"},          // Specify extensions to load for templates.
+		Funcs:      []template.FuncMap{unescapeFuncMap}, // Specify helper function maps for templates to access.
+		Charset:    "UTF-8",                             // Sets encoding for json and html content-types. Default is "UTF-8".
+		IndentJSON: true,                                // Output human readable JSON
+	}))
+
+	staticOptions := martini.StaticOptions{Prefix: "assets"}
+	m.Use(martini.Static("assets", staticOptions))
+
+	m.Get("/", indexHandler)
+	m.Get("/write", writeHandler)
+	m.Get("/edit/:id", editHandler)
+	m.Get("/delete/:id", deleteHandler)
+	m.Post("/SavePost", savePostHandler)
+	m.Post("/gethtml", getHTMLHanlder)
+
+	m.Get("/test", func() string {
+		return "test"
+	})
+
+	m.Run()
 }
